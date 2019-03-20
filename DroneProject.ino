@@ -37,9 +37,80 @@
   const int led = 13;
   boolean blinkstate = false;
   
-  int calibrateOffsets = 1;                             // int to determine whether calibration takes place or not
+  boolean calibrateOffsets = true;                             // int to determine whether calibration takes place or not
+  boolean deployedWings = false;
+
+  int wait2Deploy_ms = 3000; //abritary number.
+  //Pinouts
+  int deploymentPin = 20; // The relay signal should be soldered/connected to D20. + to 5V and - to ground.
+
+void calibrateSystem(){
   
+  char buf[500];
+  sprintf(buf, "Gyro X:%f\tY:%f\tZ:%f\t ACCEL X:%f\tY:%f\tZ:%f", 
+    CurieIMU.getGyroOffset(X_AXIS), // reads the gyro vslue for roll
+    CurieIMU.getGyroOffset(Y_AXIS), // reads the gyro value for pitch
+    CurieIMU.getGyroOffset(Z_AXIS), // reads the gyro value for yaw
+    CurieIMU.getAccelerometerOffset(X_AXIS),// reads the acceleromete vslue for x axis
+    CurieIMU.getAccelerometerOffset(Y_AXIS), // reads the acceleromete vslue for y axis
+    CurieIMU.getAccelerometerOffset(Z_AXIS)); // reads the acceleromter value for z axis
+  Serial.println(buf);
   
+  Serial.println("About to calibrate. Make sure your board is stable and upright");
+  delay(2000);
+  
+  Serial.print("Starting Gyroscope calibration and enabling offset compensation...");
+  CurieIMU.autoCalibrateGyroOffset();                // initiates the calibration software built in to the board
+  Serial.println(" Done"); 
+  
+  Serial.print("Starting Acceleration calibration and enabling offset compensation...");
+  CurieIMU.autoCalibrateAccelerometerOffset(X_AXIS, 0);        // initiates the calibration software for x axis accelermoter built in to the board
+  CurieIMU.autoCalibrateAccelerometerOffset(Y_AXIS, 0);        // initiates the calibration software for y axis accelermoter built in to the board
+  CurieIMU.autoCalibrateAccelerometerOffset(Z_AXIS, 1);        // initiates the calibration software for z axis accelermoter built in to the board
+  Serial.println(" Done"); 
+  delay(1000);
+  
+  // prints out the offset value that is used to calibrate
+  Serial.println("Internal sensor offsets AFTER calibration...");                    
+  sprintf(buf, "Gyro X:%f\tY:%f\tZ:%f\t ACCEL X:%f\tY:%f\tZ:%f", 
+    CurieIMU.getGyroOffset(X_AXIS), // reads the gyro vslue for roll
+    CurieIMU.getGyroOffset(Y_AXIS), // reads the gyro value for pitch
+    CurieIMU.getGyroOffset(Z_AXIS), // reads the gyro value for yaw
+    CurieIMU.getAccelerometerOffset(X_AXIS),// reads the acceleromete vslue for x axis
+    CurieIMU.getAccelerometerOffset(Y_AXIS), // reads the acceleromete vslue for y axis
+    CurieIMU.getAccelerometerOffset(Z_AXIS)); // reads the acceleromter value for z axis
+  Serial.println(buf);
+  delay(1000);  
+}
+
+/*
+ * - This should be called just after the aircraft reaches it's highest altitude.  
+ * - Monitor the gyro or acclermeter's Z axis to determine the aircrafts highest altitude, then call this function.
+ * - This function assume that the pin-number agrument passed as already be configured as a digital ouput pin.
+ * example:
+ * 
+ * int deploymentPin = 5
+ *  setup(){
+ *     ...
+ *     pinMode(deploymentPin, OUTPUT);
+ *     ...
+ *  }
+ *  loop(){
+ *     ...//get current pitch value
+ *     if(gPitch <= 0 && deployedWings == false){
+ *     activateWingDeployment(deploymentPin);
+ *     deployedWings = true;
+  }
+ *     ...
+ */
+void activateWingDeployment(int deploymentPin){
+  Serial.println("Activating Deployment...the line should be burning");
+  digitalWrite(deploymentPin, HIGH);
+  delay(2000);
+  digitalWrite(deploymentPin, LOW);
+  Serial.println("Deployment Finished.");
+}
+
 void setup() {
   Serial.begin(9600);                                   // begins serial communications
   while (!Serial);                                      // waits for the serial port to open before starting the program
@@ -48,59 +119,17 @@ void setup() {
   
   Serial.println("Initializing device");
   CurieIMU.begin();                        
-
-  
   CurieIMU.setGyroRange(250);                           // sets alecceromter range to 250 degrees/second
   CurieIMU.setGyroRate(25);                             // sets the rate at witch gyro data is read in HZ (used to intergrate and acuire attitude)
   CurieIMU.setAccelerometerRange(2);                    // sets acceleromter range to 2G
 
-  if (calibrateOffsets == 1) {                          // calibrateoffset is equal to 1, so its true, therfore begin calibrating data
-    Serial.println("Internal sensor offsets BEFORE calibration...");
-    Serial.print(CurieIMU.getGyroOffset(X_AXIS));       // reads the gyro vslue for roll
-    Serial.print("\t");
-    Serial.print(CurieIMU.getGyroOffset(Y_AXIS));       // reads the gyro value for pitch
-    Serial.print("\t"); 
-    Serial.print(CurieIMU.getGyroOffset(Z_AXIS));       // reads the gyro value for yaw
-    Serial.print("\t");
-    Serial.print(CurieIMU.getAccelerometerOffset(X_AXIS));      // reads the acceleromete vslue for x axis
-    Serial.print("\t");
-    Serial.print(CurieIMU.getAccelerometerOffset(Y_AXIS));      // reads the acceleromete vslue for y axis
-    Serial.print("\t");
-    Serial.print(CurieIMU.getAccelerometerOffset(Z_AXIS));      // reads the acceleromter value for z axis
-    Serial.println();
-    
-  Serial.println("About to calibrate. Make sure your board is stable and upright");
-    delay(2000);
-
-    
-   Serial.print("Starting Gyroscope calibration and enabling offset compensation...");
-    CurieIMU.autoCalibrateGyroOffset();                // initiates the calibration software built in to the board
-    Serial.println(" Done"); 
-
-   Serial.print("Starting Acceleration calibration and enabling offset compensation...");
-    CurieIMU.autoCalibrateAccelerometerOffset(X_AXIS, 0);        // initiates the calibration software for x axis accelermoter built in to the board
-    CurieIMU.autoCalibrateAccelerometerOffset(Y_AXIS, 0);        // initiates the calibration software for y axis accelermoter built in to the board
-    CurieIMU.autoCalibrateAccelerometerOffset(Z_AXIS, 1);        // initiates the calibration software for z axis accelermoter built in to the board
-    Serial.println(" Done"); 
-    delay(1000);
-
-   // prints out the offset value that is used to calibrate
-   Serial.println("Internal sensor offsets AFTER calibration...");                    
-    Serial.print(CurieIMU.getAccelerometerOffset(X_AXIS));   
-    Serial.print("\t");
-    Serial.print(CurieIMU.getAccelerometerOffset(X_AXIS));
-    Serial.print("\t");
-    Serial.print(CurieIMU.getAccelerometerOffset(X_AXIS));                      
-    Serial.print("\t");
-    Serial.print(CurieIMU.getGyroOffset(X_AXIS));
-    Serial.print("\t");      
-    Serial.print(CurieIMU.getGyroOffset(Y_AXIS));
-    Serial.print("\t");
-    Serial.print(CurieIMU.getGyroOffset(Z_AXIS));                                        
-    Serial.println();
-     delay(1000);
+  //The deploymentPin needs to be set to an unused digital pin
+  pinMode(deploymentPin, OUTPUT); //setting up deployment enable pin. when ready to deploy the wings call the function 'activateDeployment(deploymentPin);'
+  
+  if (calibrateOffsets) {                          // calibrateoffset is true, therefore begin calibrating data
+    calibrateSystem();
   }
-   time = millis();                                 // begins counting in milliseconds
+  time = millis();                                 // begins counting in milliseconds
 }
 void loop() {
 
@@ -142,7 +171,7 @@ void loop() {
   pid_p = kp*error;                                // proprtional value is just constant time error
 
   // integrative value just adjusts for small error in angle read out like between -2 and 2 degrees. Should only be needed for small angles
-  if(-3 <error< 3){
+  if(error > -3 && error< 3){
     pid_i = pid_i+(ki*error);
   }
 
@@ -153,46 +182,25 @@ void loop() {
   PID = pid_p + pid_i + pid_d;
 
   //bunch of print statements to let me know values being read for gyro roll, gyro pitch, gyro yaw, accel roll,accel pitch and filtered roll and pitch 
-  Serial.print("g_roll:\t");
-  Serial.print(groll);
-  Serial.print("\t");
-  
-  Serial.print("g_pitch:\t");
-  Serial.print(gpitch);
-  Serial.print("\t");
-  
-  Serial.print("g_yaw:\t");
-  Serial.print(gyaw);
-  Serial.print("\t");
-  
-  Serial.print("a_roll:\t");
-  Serial.print(aroll);
-  Serial.print("\t");
-  
-  Serial.print("a_pitch:\t");
-  Serial.print(apitch);
-  Serial.print("\t");
-
-  Serial.print("f_roll:\t");
-  Serial.print(roll);
-  Serial.print("\t");
-
-  Serial.print("f_pitch:\t");
-  Serial.print(pitch);
-  Serial.print("\t");
-
-  Serial.print("PID value:\t");
-  Serial.print(PID);
+  char buf[500];
+  sprintf(buf, "gRoll: %f\t gPitch: %f\t gYaw: %f\t aRoll: %f\t aPitch: %f\t roll: %f\t pitch: %f\t PID: %f\t\r\n", groll, gpitch, gyaw, aroll, apitch, roll, pitch, PID);
+  Serial.println(buf);
 
   // Time to tell this servo what to do
   PID = map(PID, -245, 245, 0, 180);                  // took PID values which range from -245 to 245 and mapped it from -90 to 90. im really sleepy
   elevator.write(PID);                                 // told that servo whats up. it should move accordingly to bring it back to 0 pitch. More work should be done on this though
-  
+
+  //check gPitch and deployedWings to determine if it is needed to activate wing deployment
+  //also make sure that gpitch is calibrated to know when to deploy.
+  if(gpitch <= 0 && deployedWings == false && time > wait2Deploy_ms){
+    activateWingDeployment(deploymentPin);
+    deployedWings = true;
+  }
+      
   // will let me know the program is running by turning the LED on
   blinkstate = !blinkstate;
   digitalWrite(led, blinkstate);
   Serial.print("\n");
   //delay(1000);
-  previous_error = error;                         // records the error to be used fo the next loop run
-                    
+  previous_error = error;                         // records the error to be used fo the next loop run          
   }
