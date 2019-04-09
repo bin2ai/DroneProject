@@ -1,206 +1,292 @@
-/* Daniel Gaviria
- *  2/21/2019
- *  Intel curienano board
- *  pitch heading with complimentary filter, PID control and servo control
- */
 
-#include "CurieIMU.h"                                   // pulls libraries to communicate with the board
-#include <Servo.h>                                      // pulls libraries to communicate with servo
+#include <MPU6050_tockn.h>
+#include <Wire.h>
+#include <PID_v1.h>
+#include<Servo.h>
 
+MPU6050 mpu6050(Wire); // for the IMU sensor
 
-  // heading variables
-  float gx, gy, gz, ax, ay, az;                         // scaled values for gyroscope and acceleromter
-  float groll, gpitch, gyaw;                            // value for gyroscopic roll pitch and yaw
-  float atotal, aroll, apitch;                          // value for acceleromter total magnitude, roll, pitch, and yaw 
-  float roll, pitch;                                    // filtered roll and pitch output
-  float pitch_angle = 0;                                // angle that we want the pitch to maintain.
+// heading variables
+float aroll, apitch;
+float groll, gpitch, gyaw;
+float roll, pitch, yaw;
+
+// timer variables
+float elapsedTime, time, timePrev;
+
+// pid constants
+double Kp_roll = 1, Ki_roll = 0.007, Kd_roll = 1;
+double Kp_pitch = 2, Ki_pitch = 0.007, Kd_pitch = 1;
+double Kp_yaw = 1, Ki_yaw = .007, Kd_yaw = 1;
+
+// pitch PID
+  double pitchSetpoint = 0, pitchInput, pitchOutput;
+  PID pitchPID(&pitchInput, &pitchOutput, &pitchSetpoint, Kp_pitch, Ki_pitch, Kd_pitch, DIRECT);
+
+// roll PID
+  double rollSetpoint = 0, rollInput, rollOutput;
+  PID rollPID(&rollInput, &rollOutput, &rollSetpoint, Kp_roll, Ki_roll, Kd_roll, DIRECT);
+
+// yaw PID
+  double yawSetpoint = 0, yawInput, yawOutput;
+  PID yawPID(&yawInput, &yawOutput, &yawSetpoint, Kp_yaw, Ki_yaw, Kd_yaw, DIRECT);
+
+// servo variables
+  float servoPitch, servoRoll, servoYaw;
+  Servo rudderServo, elevatorServo;
+  //Servo deploymentServo;
   
-  // PID 
-  float PID, error, previous_error;                     // Sum value of the PID controller, error between desired angle and actual angle, and records the error for the next loop run
-  float pid_p=0;                                        // proportional value of the pid
-  float pid_i=0;                                        // integrative value of the pid
-  float pid_d=0;                                        // derivative value of the pid
-  // PID constants should be optimized for the glider aspect
-  double kp=3;                                          // k constant for the porportional part of the pid
-  double ki=0;                                          // k constant for the integrative part of the pid
-  double kd=2;                                          // k variable for the derrivative part of the pid
- 
-  // timer variables
-  float elapsedtime, time, time_prev;                   // variables used to keep time of the program. Will be used to help intergrate gyro data
-  unsigned long time_now = 0;                           // variable to signify the starting time for the loop run
+// wing deployment
+  int deploymentPin = 8;
+  int wait2Deploy_ms = 15000;
 
-  // Servo variable and constants
-  Servo elevator;                                      // creating a new servo called elevator. Guess what it will control. Thats right....the elevator 
-
-  // some extra stuff for the led that will let me know if i should be happy or crying
-  boolean gyro_set;
-  const int led = 13;
-  boolean blinkstate = false;
-  
-  boolean calibrateOffsets = true;                             // int to determine whether calibration takes place or not
+// variables for flight phase
   boolean deployedWings = false;
+  boolean glide = false;
+  boolean launching = false;
+  boolean autopilot = false;
 
-  int wait2Deploy_ms = 3000; //abritary number.
-  //Pinouts
-  int deploymentPin = 20; // The relay signal should be soldered/connected to D20. + to 5V and - to ground.
+// Set these pin numbers to any of the non-PWM digital pins (Note: 4 & 7 are valid)
+int orPinNum = 2; // Digital pin number for the override switch (from tx/rx)
+int elPinNum = 3; // Digital pin number for the elevator command (from tx/rx)
 
-void calibrateSystem(){
-  
-  char buf[500];
-  sprintf(buf, "Gyro X:%f\tY:%f\tZ:%f\t ACCEL X:%f\tY:%f\tZ:%f", 
-    CurieIMU.getGyroOffset(X_AXIS), // reads the gyro vslue for roll
-    CurieIMU.getGyroOffset(Y_AXIS), // reads the gyro value for pitch
-    CurieIMU.getGyroOffset(Z_AXIS), // reads the gyro value for yaw
-    CurieIMU.getAccelerometerOffset(X_AXIS),// reads the acceleromete vslue for x axis
-    CurieIMU.getAccelerometerOffset(Y_AXIS), // reads the acceleromete vslue for y axis
-    CurieIMU.getAccelerometerOffset(Z_AXIS)); // reads the acceleromter value for z axis
-  Serial.println(buf);
-  
-  Serial.println("About to calibrate. Make sure your board is stable and upright");
-  delay(2000);
-  
-  Serial.print("Starting Gyroscope calibration and enabling offset compensation...");
-  CurieIMU.autoCalibrateGyroOffset();                // initiates the calibration software built in to the board
-  Serial.println(" Done"); 
-  
-  Serial.print("Starting Acceleration calibration and enabling offset compensation...");
-  CurieIMU.autoCalibrateAccelerometerOffset(X_AXIS, 0);        // initiates the calibration software for x axis accelermoter built in to the board
-  CurieIMU.autoCalibrateAccelerometerOffset(Y_AXIS, 0);        // initiates the calibration software for y axis accelermoter built in to the board
-  CurieIMU.autoCalibrateAccelerometerOffset(Z_AXIS, 1);        // initiates the calibration software for z axis accelermoter built in to the board
-  Serial.println(" Done"); 
-  delay(1000);
-  
-  // prints out the offset value that is used to calibrate
-  Serial.println("Internal sensor offsets AFTER calibration...");                    
-  sprintf(buf, "Gyro X:%f\tY:%f\tZ:%f\t ACCEL X:%f\tY:%f\tZ:%f", 
-    CurieIMU.getGyroOffset(X_AXIS), // reads the gyro vslue for roll
-    CurieIMU.getGyroOffset(Y_AXIS), // reads the gyro value for pitch
-    CurieIMU.getGyroOffset(Z_AXIS), // reads the gyro value for yaw
-    CurieIMU.getAccelerometerOffset(X_AXIS),// reads the acceleromete vslue for x axis
-    CurieIMU.getAccelerometerOffset(Y_AXIS), // reads the acceleromete vslue for y axis
-    CurieIMU.getAccelerometerOffset(Z_AXIS)); // reads the acceleromter value for z axis
-  Serial.println(buf);
-  delay(1000);  
-}
+// Global override flag
+bool manualOverride = false;
 
-/*
- * - This should be called just after the aircraft reaches it's highest altitude.  
- * - Monitor the gyro or acclermeter's Z axis to determine the aircrafts highest altitude, then call this function.
- * - This function assume that the pin-number agrument passed as already be configured as a digital ouput pin.
- * example:
- * 
- * int deploymentPin = 5
- *  setup(){
- *     ...
- *     pinMode(deploymentPin, OUTPUT);
- *     ...
- *  }
- *  loop(){
- *     ...//get current pitch value
- *     if(gPitch <= 0 && deployedWings == false){
- *     activateWingDeployment(deploymentPin);
- *     deployedWings = true;
-  }
- *     ...
- */
-void activateWingDeployment(int deploymentPin){
-  Serial.println("Activating Deployment...the line should be burning");
-  digitalWrite(deploymentPin, HIGH);
-  delay(2000);
-  digitalWrite(deploymentPin, LOW);
-  Serial.println("Deployment Finished.");
-}
+// Thresholds for what is considered "on" for the override switch
+// TODO: Set this based on the pulse width when the switch is active vs inactive
+static int orPwmThresh = 1500; // Units: microseconds
+
+// Initialization of global variables needed for manual PWM capture (i.e. the failsafe feature)
+volatile int orPwmValue = 0;
+volatile int elPwmValue = 0;
+volatile int orStartTime = 0;
+volatile int elStartTime = 0;
 
 void setup() {
-  Serial.begin(9600);                                   // begins serial communications
-  while (!Serial);                                      // waits for the serial port to open before starting the program
+  Serial.begin(9600);
+  Wire.begin();
+  mpu6050.begin();
+  mpu6050.calcGyroOffsets(true);
 
-  elevator.attach(9);                                   // attached my elevator servo to pin 9. Hope they dont get too attatched though
-  
-  Serial.println("Initializing device");
-  CurieIMU.begin();                        
-  CurieIMU.setGyroRange(250);                           // sets alecceromter range to 250 degrees/second
-  CurieIMU.setGyroRate(25);                             // sets the rate at witch gyro data is read in HZ (used to intergrate and acuire attitude)
-  CurieIMU.setAccelerometerRange(2);                    // sets acceleromter range to 2G
+// Initialize the interrupt to look for a rising edge on the override pin
+  attachInterrupt(digitalPinToInterrupt(orPinNum), orRising, RISING);
 
-  //The deploymentPin needs to be set to an unused digital pin
-  pinMode(deploymentPin, OUTPUT); //setting up deployment enable pin. when ready to deploy the wings call the function 'activateDeployment(deploymentPin);'
+  pinMode(deploymentPin, OUTPUT);
+  //deploymentServo.attach(8);
+  //deploymentServo.write(90);
+  rudderServo.attach(9);
+  elevatorServo.attach(10);
+
+  pitchInput = pitch;
+  rollInput = roll;
+  yawInput = yaw;
+
+  pitchSetpoint = 0;
+  rollSetpoint = 0;
+  yawSetpoint = 0;
+
+  pitchPID.SetOutputLimits(-90,90);
+  rollPID.SetOutputLimits(-90,90);
+  yawPID.SetOutputLimits(-90,90);
+
+  pitchPID.SetMode(AUTOMATIC);
+  rollPID.SetMode(AUTOMATIC);
+  yawPID.SetMode(AUTOMATIC);
+
+  // the deploymentPin needs to be set to an unused digital pin
+  //pinMode(deploymentPin, OUTPUT); 
+  //setting up deployment enable pin. when ready to deploy the wings call the function 'activateDeployment(deploymentPin);'
   
-  if (calibrateOffsets) {                          // calibrateoffset is true, therefore begin calibrating data
-    calibrateSystem();
-  }
-  time = millis();                                 // begins counting in milliseconds
+  elevatorServo.write(45);
+  delay(300);
+  elevatorServo.write(120);
+  delay(300);
+  elevatorServo.write(45);
+  delay(300);
+  elevatorServo.write(90);
+  rudderServo.write(90);
+  delay(300);
+  
+  time = millis(); //Start counting time in milliseconds
 }
+
 void loop() {
+  timePrev = time;  // the previous time is stored before the actual time read
+    time = millis();  // actual time read
+    elapsedTime = (time - timePrev) / 1000;
+ 
+  mpu6050.update();
 
-  time_prev = time;                                 // previos time stored before actual time read
-  time = millis();                                  // actual time read
-  elapsedtime = (time - time_prev)/1000;            // since in milliseconds, this value is divided by 1000 to get seconds
+  aroll = mpu6050.getAccAngleY();
+  apitch = mpu6050.getAccAngleX();
+  groll = mpu6050.getGyroAngleY();
+  gpitch = mpu6050.getGyroAngleX();  
+  gyaw = mpu6050.getGyroAngleZ();
+  
+  groll += ((gpitch*.01745)*sin(gyaw*.01745));
+  gpitch -= ((groll*.01745)*sin(gyaw*.01745));
+  
+  groll = groll*.9 + aroll*.1;
+  gpitch = gpitch*.9 + apitch*.1;
+  
+  roll = roll*.8 + groll*.2;
+  pitch = pitch*.8 + gpitch*.2;
 
-  CurieIMU.readGyroScaled(gx, gy, gz);              // reads gyro measurement and is scaled to the configured range
-  CurieIMU.readAccelerometerScaled(ax, ay, az);     // reads accelremoter measurement and is scaled to configured range
+  pitchInput = pitch;
+  rollInput = roll;
+  yaw = gyaw;
+  yawInput = yaw;
 
-  // intergrates gyro rate to get angle heading. 1/Hz = s
-  groll+=(gx*elapsedtime);                                      
-  gpitch+=(gy*elapsedtime);
-  gyaw+=(gz*elapsedtime);
+  pitchPID.SetTunings(Kp_pitch, Ki_pitch, Kd_pitch);
+  rollPID.SetTunings(Kp_roll, Ki_roll, Kd_roll);
+  yawPID.SetTunings(Kp_yaw, Ki_yaw, Kd_yaw);
 
-  atotal = sqrt((ax*ax)+(ay*ay)+(az*az));           // calcultaes the accelerometer total vector
-  aroll=asin((float) ay/atotal)*57.296;             // 57.296 = 180/3.142 converting to radians
-  apitch=asin((float) ax/atotal)*-57.296;
+  pitchPID.Compute();
+  rollPID.Compute();
+  yawPID.Compute();
+    
+  servoPitch = map(pitchOutput, 90, -90, 0, 180);
+  servoRoll = map(rollOutput, 90, -90, 180, 0);
+  servoYaw = map(yawOutput, 90, -90, 0, 180);
 
-  // low band pass filter that takes 99.96 percent of the gyro data and adds .04 percent of the acceleromter data
-  if(gyro_set){                                     
-    gpitch = gpitch*.98 + apitch*.02;
-    groll = groll*.98 + aroll*.02;
+ if(glide == false && deployedWings == false){
+  launching = true;
+ }
+
+ if(gpitch <= 0 && deployedWings == false && time > wait2Deploy_ms){
+  activateWingDeployment();
+  launching = false;
+  deployedWings = true;
+  glide = true;
   }
-  // during initial setup, the gyro data will initially match the accelerometer data since the gyro data wont read 0 initially
-  else{                                             
-    gpitch = apitch;            
-    groll = aroll;
-    gyro_set = true;
+
+  if(deployedWings == true && glide == true){
+    autopilot = true;
   }
-  // high band pass filter, takes 90 percent of the previous reading and adds 10 percent of the current reading
-  roll = roll*.9 + groll*.1;                       
-  pitch = pitch*.9 + gpitch*.1;
-
-  // PID stuff!!!
-
-  error = pitch - pitch_angle;                     // calculates the error between the measured angle and desired angle
-
-  pid_p = kp*error;                                // proprtional value is just constant time error
-
-  // integrative value just adjusts for small error in angle read out like between -2 and 2 degrees. Should only be needed for small angles
-  if(error > -3 && error< 3){
-    pid_i = pid_i+(ki*error);
+  
+  if (manualOverride) {
+    // This is where you decode the tx/rx PWM value for the elevator command (elPwmValue)
+    // and convert it to the appropriate elevator signal. Also set the rudder and aileron
+    // cmds to 0 (Note: it might not need any conversion if the pulse width for the Tx/Rx
+    // and your servos aligns thus you can simply pass it straight through the way you
+    // would normally) TODO
+    elevatorServo.write(elPwmValue);
+    rudderServo.write(90);
+    Serial.print("manual overide");
+    
   }
 
-  // derrivative value takes in account previous error and adjust current error
-  pid_d = kd*((error - previous_error)/elapsedtime);
-
-  // Sum values equals the PID value to adjust the servos with
-  PID = pid_p + pid_i + pid_d;
-
-  //bunch of print statements to let me know values being read for gyro roll, gyro pitch, gyro yaw, accel roll,accel pitch and filtered roll and pitch 
-  char buf[500];
-  sprintf(buf, "gRoll: %f\t gPitch: %f\t gYaw: %f\t aRoll: %f\t aPitch: %f\t roll: %f\t pitch: %f\t PID: %f\t\r\n", groll, gpitch, gyaw, aroll, apitch, roll, pitch, PID);
-  Serial.println(buf);
-
-  // Time to tell this servo what to do
-  PID = map(PID, -245, 245, 0, 180);                  // took PID values which range from -245 to 245 and mapped it from -90 to 90. im really sleepy
-  elevator.write(PID);                                 // told that servo whats up. it should move accordingly to bring it back to 0 pitch. More work should be done on this though
-
-  //check gPitch and deployedWings to determine if it is needed to activate wing deployment
-  //also make sure that gpitch is calibrated to know when to deploy.
-  if(gpitch <= 0 && deployedWings == false && time > wait2Deploy_ms){
-    activateWingDeployment(deploymentPin);
-    deployedWings = true;
+  else{
+    
+  if(launching == true){
+    rudderServo.write(90);
+    elevatorServo.write(90);
+    Serial.print("launching");
   }
-      
-  // will let me know the program is running by turning the LED on
-  blinkstate = !blinkstate;
-  digitalWrite(led, blinkstate);
-  Serial.print("\n");
-  //delay(1000);
-  previous_error = error;                         // records the error to be used fo the next loop run          
+  
+
+  if(autopilot == true){
+      elevatorServo.write(servoPitch);
+      if(roll>20 || roll<-20){
+        
+        rudderServo.write(servoRoll);
+      }
+      else{
+        rudderServo.write(servoYaw);
+      }
   }
+  
+  }
+    Serial.println();
+    Serial.print("gyaw:\t");
+    Serial.print(gyaw);
+    Serial.print("\t");
+ 
+    Serial.print("roll:\t");
+    Serial.print(roll);
+    Serial.print("\t");
+
+    Serial.print("pitch:\t");
+    Serial.print(pitch);
+    Serial.print("\t");
+    
+    Serial.print("pitch PID:\t");
+    Serial.print(pitchOutput);
+    Serial.print("\t");
+
+    Serial.print("servo pitch position\t");
+    Serial.print(servoPitch);
+    Serial.print("\t");
+
+    Serial.print("servo roll position:\t");
+    Serial.print(servoRoll);
+    
+    Serial.println();
+
+
+}
+
+
+void activateWingDeployment(){
+  Serial.println("Activating Deployment...the line should be burning");
+  //deploymentServo.write(0);
+  digitalWrite(deploymentPin, HIGH);
+  delay(100);
+  digitalWrite(deploymentPin, LOW);
+  Serial.println("Deployment Finished.");
+
+}
+
+// This function runs when the rising edge of the override pin occurs
+void orRising() {
+  // Grab current time when signal went high
+  orStartTime = micros(); // Units: microseconds
+
+  // Start the interrupt that fires when the falling edge (signal low) is detected
+  attachInterrupt(digitalPinToInterrupt(orPinNum), orFalling, FALLING);
+}
+
+// This function runs when the falling edge of the override pin occurs
+void orFalling() {
+  // Grab difference between current time (when falling edge occured) and  when
+  // the rising edge occured - the delta is the pulse width
+  orPwmValue = micros() - orStartTime; // Units: microseconds
+
+  // Check if the threshold was met (i.e. the override switch was flipped on the Tx)
+  if (orPwmValue > orPwmThresh) {
+    // If so, set manual override flag true and start elevator cmd interrupt
+    if (!manualOverride){
+      manualOverride = true;
+      attachInterrupt(digitalPinToInterrupt(elPinNum), elRising, RISING);
+    }
+  }
+  else {
+    
+    // If not, set manual override flag false and detach elevator cmd interrupt
+    manualOverride = false;
+    detachInterrupt(digitalPinToInterrupt(elPinNum));
+  }
+  
+  // Restart the interrupt that fires when the rising edge (signal high) is detected
+  attachInterrupt(digitalPinToInterrupt(orPinNum), orRising, RISING);
+}
+
+// This function runs when the rising edge of the elevator PWM command occurs
+void elRising() {
+  // Grab current time when signal went high
+  elStartTime = micros(); // Units: microseconds
+
+  // Start the interrupt that fires when the falling edge (signal low) is detected
+  attachInterrupt(digitalPinToInterrupt(elPinNum), elFalling, FALLING);
+}
+
+// This function runs when the falling edge of the elevator PWM command occurs
+void elFalling() {
+  // Grab difference between current time (when falling edge occured) and  when
+  // the rising edge occured - the delta is the pulse width
+  elPwmValue = micros() - elStartTime; // Units: microseconds
+
+  // Start the interrupt that fires when the falling edge (signal low) is detected
+  attachInterrupt(digitalPinToInterrupt(elPinNum), elRising, RISING);
+}
